@@ -12,7 +12,10 @@ const app = express();
 
 // Middleware
 app.use(cors({
-  origin: 'http://localhost:3000',
+  origin: [
+    'http://localhost:3000',
+    process.env.FRONTEND_URL,
+  ].filter(Boolean), // filters out undefined if FRONTEND_URL isn't set yet
   credentials: true,
 }));
 
