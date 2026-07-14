@@ -8,6 +8,7 @@ const affiliateRoutes = require('./routes/affiliateRoutes');
 const rewardRoutes = require('./routes/rewardRoutes');
 
 dotenv.config();
+console.log('DEBUG — FRONTEND_URL is:', JSON.stringify(process.env.FRONTEND_URL));
 const app = express();
 
 // Middleware
