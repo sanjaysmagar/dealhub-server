@@ -1,5 +1,7 @@
-const Deal = require('../models/Deal');
-const { checkAndAwardBadges } = require('../utils/rewardEngine');
+const Deal = require("../models/Deal");
+const AffiliateLink = require("../models/AffiliateLink");
+const { buildAffiliateUrl } = require("../utils/affiliateUrlBuilder");
+const { checkAndAwardBadges } = require("../utils/rewardEngine");
 
 // ─── CREATE DEAL ─────────────────────────────────────────────
 // @route   POST /api/deals
@@ -7,9 +9,15 @@ const { checkAndAwardBadges } = require('../utils/rewardEngine');
 const createDeal = async (req, res) => {
   try {
     const {
-      title, description, originalPrice,
-      discountedPrice, category, imageUrl,
-      externalLink, retailer, expiresAt,
+      title,
+      description,
+      originalPrice,
+      discountedPrice,
+      category,
+      imageUrl,
+      externalLink,
+      retailer,
+      expiresAt,
     } = req.body;
 
     const deal = await Deal.create({
@@ -20,25 +28,48 @@ const createDeal = async (req, res) => {
       category,
       imageUrl,
       externalLink,
-      retailer: retailer || 'other',
+      retailer: retailer || "other",
       expiresAt: expiresAt || null,
       postedBy: req.user._id,
-      // ─── AFFILIATE HOOK ──────────────────────────────────
-      // Plug eBay / Skimlinks in here later:
-      // affiliate: await generateAffiliateUrl(externalLink, retailer)
-      // ─────────────────────────────────────────────────────
     });
 
+    // ─── AUTO-CREATE THE POSTER'S AFFILIATE LINK ────────────────────
+    // Every deal gets a tracked link owned by whoever posted it, so the
+    // main "Get This Deal" button on the detail page earns them clicks,
+    // points, and (once eBay/Skimlinks credentials exist for that
+    // retailer) real commission — by default, without them having to
+    // manually click "Generate My Affiliate Link" first.
+    const posterLink = await AffiliateLink.create({
+      dealId: deal._id,
+      userId: req.user._id,
+    });
+
+    const { url, platform } = buildAffiliateUrl({
+      externalLink: deal.externalLink,
+      retailer: deal.retailer,
+      customId: posterLink.trackingCode,
+    });
+
+    deal.affiliate = {
+      url: url || null,
+      platform: platform || null,
+      trackingCode: posterLink.trackingCode, // always set, even if url is null —
+      // trackClick() falls back to externalLink
+    };
+    await deal.save();
+
+    // Check for first_deal and deal_maker badges automatically
     await checkAndAwardBadges(req.user._id);
 
-    const populatedDeal = await Deal.findById(deal._id)
-      .populate('postedBy', 'username avatar');
+    const populatedDeal = await Deal.findById(deal._id).populate(
+      "postedBy",
+      "username avatar",
+    );
 
     res.status(201).json({
-      message: 'Deal posted successfully',
+      message: "Deal posted successfully",
       deal: populatedDeal,
     });
-
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -54,13 +85,13 @@ const getAllDeals = async (req, res) => {
       search,
       category,
       retailer,
-      sort = 'hot',
+      sort = "hot",
       page = 1,
       limit = 10,
     } = req.query;
 
     // Only show live approved deals
-    const filter = { status: 'approved' };
+    const filter = { status: "approved" };
 
     if (search) {
       filter.$text = { $search: search };
@@ -70,9 +101,9 @@ const getAllDeals = async (req, res) => {
 
     // Sort options — just like HotUKDeals
     const sortOptions = {
-      hot: { score: -1 },          // highest score (upvotes - downvotes)
-      new: { createdAt: -1 },      // newest first
-      top: { 'votes.up': -1 },     // most upvotes
+      hot: { score: -1 }, // highest score (upvotes - downvotes)
+      new: { createdAt: -1 }, // newest first
+      top: { "votes.up": -1 }, // most upvotes
     };
     const sortBy = sortOptions[sort] || sortOptions.hot;
 
@@ -84,8 +115,8 @@ const getAllDeals = async (req, res) => {
       .sort(sortBy)
       .skip(skip)
       .limit(limitNum)
-      .populate('postedBy', 'username avatar')
-      .select('-voters'); // don't expose full voters list
+      .populate("postedBy", "username avatar")
+      .select("-voters"); // don't expose full voters list
 
     const total = await Deal.countDocuments(filter);
 
@@ -98,7 +129,6 @@ const getAllDeals = async (req, res) => {
         limit: limitNum,
       },
     });
-
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -110,15 +140,14 @@ const getAllDeals = async (req, res) => {
 const getDealById = async (req, res) => {
   try {
     const deal = await Deal.findById(req.params.id)
-      .populate('postedBy', 'username avatar points badges')
-      .select('-voters');
+      .populate("postedBy", "username avatar points badges")
+      .select("-voters");
 
-    if (!deal || deal.status === 'rejected') {
-      return res.status(404).json({ message: 'Deal not found' });
+    if (!deal || deal.status === "rejected") {
+      return res.status(404).json({ message: "Deal not found" });
     }
 
     res.status(200).json(deal);
-
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -132,30 +161,47 @@ const updateDeal = async (req, res) => {
     const deal = await Deal.findById(req.params.id);
 
     if (!deal) {
-      return res.status(404).json({ message: 'Deal not found' });
+      return res.status(404).json({ message: "Deal not found" });
     }
 
     if (deal.postedBy.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: 'Not authorised to update this deal' });
+      return res
+        .status(403)
+        .json({ message: "Not authorised to update this deal" });
     }
 
     const {
-      title, description, originalPrice,
-      discountedPrice, category, imageUrl,
-      externalLink, retailer, expiresAt,
+      title,
+      description,
+      originalPrice,
+      discountedPrice,
+      category,
+      imageUrl,
+      externalLink,
+      retailer,
+      expiresAt,
     } = req.body;
 
     const updatedDeal = await Deal.findByIdAndUpdate(
       req.params.id,
-      { title, description, originalPrice, discountedPrice, category, imageUrl, externalLink, retailer, expiresAt },
-      { new: true, runValidators: true }
-    ).populate('postedBy', 'username avatar');
+      {
+        title,
+        description,
+        originalPrice,
+        discountedPrice,
+        category,
+        imageUrl,
+        externalLink,
+        retailer,
+        expiresAt,
+      },
+      { new: true, runValidators: true },
+    ).populate("postedBy", "username avatar");
 
     res.status(200).json({
-      message: 'Deal updated successfully',
+      message: "Deal updated successfully",
       deal: updatedDeal,
     });
-
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -169,19 +215,20 @@ const deleteDeal = async (req, res) => {
     const deal = await Deal.findById(req.params.id);
 
     if (!deal) {
-      return res.status(404).json({ message: 'Deal not found' });
+      return res.status(404).json({ message: "Deal not found" });
     }
 
     const isOwner = deal.postedBy.toString() === req.user._id.toString();
-    const isAdmin = req.user.role === 'admin';
+    const isAdmin = req.user.role === "admin";
 
     if (!isOwner && !isAdmin) {
-      return res.status(403).json({ message: 'Not authorised to delete this deal' });
+      return res
+        .status(403)
+        .json({ message: "Not authorised to delete this deal" });
     }
 
     await deal.deleteOne();
-    res.status(200).json({ message: 'Deal deleted successfully' });
-
+    res.status(200).json({ message: "Deal deleted successfully" });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -198,15 +245,15 @@ const voteDeal = async (req, res) => {
   try {
     const { voteType } = req.body; // 'up' or 'down'
 
-    if (!['up', 'down'].includes(voteType)) {
-      return res.status(400).json({ message: 'Vote type must be up or down' });
+    if (!["up", "down"].includes(voteType)) {
+      return res.status(400).json({ message: "Vote type must be up or down" });
     }
 
     const deal = await Deal.findById(req.params.id);
-    if (!deal) return res.status(404).json({ message: 'Deal not found' });
+    if (!deal) return res.status(404).json({ message: "Deal not found" });
 
     const existingVoteIndex = deal.voters.findIndex(
-      v => v.userId.toString() === req.user._id.toString()
+      (v) => v.userId.toString() === req.user._id.toString(),
     );
 
     if (existingVoteIndex !== -1) {
@@ -233,11 +280,10 @@ const voteDeal = async (req, res) => {
     await deal.save();
 
     res.status(200).json({
-      message: 'Vote recorded',
+      message: "Vote recorded",
       votes: deal.votes,
       score: deal.score,
     });
-
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -250,23 +296,24 @@ const moderateDeal = async (req, res) => {
   try {
     const { status } = req.body; // 'approved' or 'rejected'
 
-    if (!['approved', 'rejected'].includes(status)) {
-      return res.status(400).json({ message: 'Status must be approved or rejected' });
+    if (!["approved", "rejected"].includes(status)) {
+      return res
+        .status(400)
+        .json({ message: "Status must be approved or rejected" });
     }
 
     const deal = await Deal.findByIdAndUpdate(
       req.params.id,
       { status },
-      { new: true }
+      { new: true },
     );
 
-    if (!deal) return res.status(404).json({ message: 'Deal not found' });
+    if (!deal) return res.status(404).json({ message: "Deal not found" });
 
     res.status(200).json({
       message: `Deal ${status} successfully`,
       deal,
     });
-
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -279,7 +326,7 @@ const getMyDeals = async (req, res) => {
   try {
     const deals = await Deal.find({ postedBy: req.user._id })
       .sort({ createdAt: -1 })
-      .select('-voters');
+      .select("-voters");
 
     res.status(200).json(deals);
   } catch (error) {
@@ -295,7 +342,7 @@ const getAllDealsAdmin = async (req, res) => {
     const { search, category, status, page = 1, limit = 20 } = req.query;
 
     const filter = {};
-    if (status && status !== 'all') filter.status = status;
+    if (status && status !== "all") filter.status = status;
     if (category) filter.category = category;
     if (search) filter.$text = { $search: search };
 
@@ -307,12 +354,12 @@ const getAllDealsAdmin = async (req, res) => {
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limitNum)
-      .populate('postedBy', 'username avatar')
-      .select('-voters');
+      .populate("postedBy", "username avatar")
+      .select("-voters");
 
     const total = await Deal.countDocuments(filter);
-    const approvedCount = await Deal.countDocuments({ status: 'approved' });
-    const rejectedCount = await Deal.countDocuments({ status: 'rejected' });
+    const approvedCount = await Deal.countDocuments({ status: "approved" });
+    const rejectedCount = await Deal.countDocuments({ status: "rejected" });
 
     res.status(200).json({
       deals,
@@ -334,7 +381,13 @@ const getAllDealsAdmin = async (req, res) => {
 };
 
 module.exports = {
-  createDeal, getAllDeals, getDealById,
-  updateDeal, deleteDeal, voteDeal,
-  moderateDeal, getMyDeals, getAllDealsAdmin,
+  createDeal,
+  getAllDeals,
+  getDealById,
+  updateDeal,
+  deleteDeal,
+  voteDeal,
+  moderateDeal,
+  getMyDeals,
+  getAllDealsAdmin,
 };
