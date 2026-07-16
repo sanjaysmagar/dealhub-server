@@ -1,6 +1,7 @@
-const Deal = require('../models/Deal');
-const AffiliateLink = require('../models/AffiliateLink');
-const { awardPoints } = require('../utils/rewardEngine');
+const Deal = require("../models/Deal");
+const AffiliateLink = require("../models/AffiliateLink");
+const { awardPoints } = require("../utils/rewardEngine");
+const { buildAffiliateUrl } = require("../utils/affiliateUrlBuilder");
 
 // ─── GENERATE LINK ─────────────────────────────────────────────
 // @route   POST /api/affiliate/generate
@@ -19,6 +20,24 @@ const generateLink = async (req, res) => {
     let link = await AffiliateLink.findOne({ dealId, userId: req.user._id });
     if (!link) {
       link = await AffiliateLink.create({ dealId, userId: req.user._id });
+
+      // Generate the REAL network affiliate URL (eBay or Skimlinks) if credentials
+      // exist, and store it on the deal so trackClick() redirects through the
+      // real network instead of the plain external link.
+      if (!deal.affiliate?.url) {
+        const { url, platform } = buildAffiliateUrl({
+          externalLink: deal.externalLink,
+          retailer: deal.retailer,
+          customId: link.trackingCode,
+        });
+
+        if (url) {
+          deal.affiliate = { url, platform, trackingCode: link.trackingCode };
+          await deal.save();
+        }
+        // If url is null (network not set up), deal.affiliate stays null and
+        // trackClick() already falls back to deal.externalLink — nothing breaks.
+      }
     }
 
     const baseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 5000}`;
@@ -43,17 +62,23 @@ const generateLink = async (req, res) => {
 // this link from social media won't be logged into your platform.
 const trackClick = async (req, res) => {
   try {
-    const link = await AffiliateLink.findOne({ trackingCode: req.params.trackingCode });
-    if (!link) return res.status(404).json({ message: 'Invalid or expired affiliate link' });
+    const link = await AffiliateLink.findOne({
+      trackingCode: req.params.trackingCode,
+    });
+    if (!link)
+      return res
+        .status(404)
+        .json({ message: "Invalid or expired affiliate link" });
 
     const deal = await Deal.findById(link.dealId);
-    if (!deal) return res.status(404).json({ message: 'Deal no longer exists' });
+    if (!deal)
+      return res.status(404).json({ message: "Deal no longer exists" });
 
     // Record the click + award the click point
     link.clicks += 1;
     link.pointsEarned += await awardPoints({
       userId: link.userId,
-      type: 'click',
+      type: "click",
       affiliateLinkId: link._id,
     });
 
@@ -63,9 +88,9 @@ const trackClick = async (req, res) => {
       link.conversions += 1;
       link.pointsEarned += await awardPoints({
         userId: link.userId,
-        type: 'conversion',
+        type: "conversion",
         affiliateLinkId: link._id,
-        description: 'Simulated purchase (auto)',
+        description: "Simulated purchase (auto)",
       });
     }
 
@@ -75,7 +100,6 @@ const trackClick = async (req, res) => {
     // When eBay/Skimlinks is integrated, deal.affiliate.url gets
     // populated and takes over automatically — nothing else changes.
     res.redirect(302, deal.affiliate?.url || deal.externalLink);
-
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -87,21 +111,29 @@ const trackClick = async (req, res) => {
 // purely a demo/testing tool, not a real transaction.
 const simulatePurchase = async (req, res) => {
   try {
-    const link = await AffiliateLink.findOne({ trackingCode: req.params.trackingCode });
-    if (!link) return res.status(404).json({ message: 'Affiliate link not found' });
+    const link = await AffiliateLink.findOne({
+      trackingCode: req.params.trackingCode,
+    });
+    if (!link)
+      return res.status(404).json({ message: "Affiliate link not found" });
 
     link.conversions += 1;
     const points = await awardPoints({
       userId: link.userId,
-      type: 'conversion',
+      type: "conversion",
       affiliateLinkId: link._id,
-      description: 'Simulated purchase (manual demo trigger)',
+      description: "Simulated purchase (manual demo trigger)",
     });
     link.pointsEarned += points;
     await link.save();
 
-    res.status(200).json({ message: 'Purchase simulated successfully', pointsAwarded: points, link });
-
+    res
+      .status(200)
+      .json({
+        message: "Purchase simulated successfully",
+        pointsAwarded: points,
+        link,
+      });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -113,11 +145,10 @@ const simulatePurchase = async (req, res) => {
 const getMyLinks = async (req, res) => {
   try {
     const links = await AffiliateLink.find({ userId: req.user._id })
-      .populate('dealId', 'title imageUrl discountPercent retailer')
+      .populate("dealId", "title imageUrl discountPercent retailer")
       .sort({ createdAt: -1 });
 
     res.status(200).json(links);
-
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
