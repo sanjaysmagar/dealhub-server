@@ -3,10 +3,10 @@ const router = express.Router();
 const {
   generateLink, trackClick, simulatePurchase, getMyLinks,
 } = require('../controllers/affiliateController');
-const { protect, identifyIfLoggedIn  } = require('../middleware/authMiddleware');
+const { protect } = require('../middleware/authMiddleware');
 
 // Public — the actual shareable link
-router.get('/go/:trackingCode', identifyIfLoggedIn, trackClick);
+router.get('/go/:trackingCode', trackClick);
 
 // Private
 router.post('/generate', protect, generateLink);

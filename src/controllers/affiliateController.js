@@ -62,41 +62,43 @@ const generateLink = async (req, res) => {
 // this link from social media won't be logged into your platform.
 const trackClick = async (req, res) => {
   try {
-    const link = await AffiliateLink.findOne({ trackingCode: req.params.trackingCode });
-    if (!link) return res.status(404).json({ message: 'Invalid or expired affiliate link' });
+    const link = await AffiliateLink.findOne({
+      trackingCode: req.params.trackingCode,
+    });
+    if (!link)
+      return res
+        .status(404)
+        .json({ message: "Invalid or expired affiliate link" });
 
     const deal = await Deal.findById(link.dealId);
-    if (!deal) return res.status(404).json({ message: 'Deal no longer exists' });
+    if (!deal)
+      return res.status(404).json({ message: "Deal no longer exists" });
 
-    // Self-click detection — if the clicker is logged in (via cookie) and
-    // is the owner of this link, skip awarding points. Mirrors how real
-    // affiliate networks exclude self-referral clicks from commission.
-    const isSelfClick = req.user && req.user._id.toString() === link.userId.toString();
-
-    // Always record the click itself, for traffic visibility
+    // Record the click + award the click point
     link.clicks += 1;
+    link.pointsEarned += await awardPoints({
+      userId: link.userId,
+      type: "click",
+      affiliateLinkId: link._id,
+    });
 
-    if (!isSelfClick) {
+    // ─── AUTO-SIMULATE CONVERSION (~10% chance) ──────────────────
+    // Stand-in for a real eBay/Skimlinks postback until that's wired up.
+    if (Math.random() < 0.1) {
+      link.conversions += 1;
       link.pointsEarned += await awardPoints({
         userId: link.userId,
-        type: 'click',
+        type: "conversion",
         affiliateLinkId: link._id,
+        description: "Simulated purchase (auto)",
       });
-
-      // Auto-simulate conversion (~10% chance) — also skipped for self-clicks
-      if (Math.random() < 0.1) {
-        link.conversions += 1;
-        link.pointsEarned += await awardPoints({
-          userId: link.userId,
-          type: 'conversion',
-          affiliateLinkId: link._id,
-          description: 'Simulated purchase (auto)',
-        });
-      }
     }
 
     await link.save();
 
+    // ─── REDIRECT TARGET ───────────────────────────────────────────
+    // When eBay/Skimlinks is integrated, deal.affiliate.url gets
+    // populated and takes over automatically — nothing else changes.
     res.redirect(302, deal.affiliate?.url || deal.externalLink);
   } catch (error) {
     res.status(500).json({ message: error.message });
