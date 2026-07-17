@@ -134,6 +134,27 @@ const getAllDeals = async (req, res) => {
   }
 };
 
+// ─── FEATURED DEAL (top-rated, non-expired) ─────────────────
+// @route   GET /api/deals/featured
+// @access  Public
+const getFeaturedDeal = async (req, res) => {
+  try {
+    const now = new Date();
+
+    const deal = await Deal.findOne({
+      status: "approved",
+      $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }],
+    })
+      .sort({ score: -1 })
+      .populate("postedBy", "username avatar")
+      .select("-voters");
+
+    res.status(200).json(deal); // null if no deals exist yet — frontend handles that
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 // ─── GET SINGLE DEAL ─────────────────────────────────────────
 // @route   GET /api/deals/:id
 // @access  Public
@@ -390,4 +411,5 @@ module.exports = {
   moderateDeal,
   getMyDeals,
   getAllDealsAdmin,
+  getFeaturedDeal,
 };
