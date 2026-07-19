@@ -11,12 +11,14 @@ const {
   getMyDeals,
   getAllDealsAdmin,
   getFeaturedDeal,
+  getPlatformStats,
 } = require("../controllers/dealController");
 const { protect, adminOnly } = require("../middleware/authMiddleware");
 
 // Public
 router.get("/", getAllDeals);
 router.get("/featured", getFeaturedDeal);
+router.get("/stats", getPlatformStats);
 router.get("/:id", getDealById);
 
 // Private

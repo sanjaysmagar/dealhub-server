@@ -2,6 +2,7 @@ const Deal = require("../models/Deal");
 const AffiliateLink = require("../models/AffiliateLink");
 const { buildAffiliateUrl } = require("../utils/affiliateUrlBuilder");
 const { checkAndAwardBadges } = require("../utils/rewardEngine");
+const User = require("../models/User");
 
 // ─── CREATE DEAL ─────────────────────────────────────────────
 // @route   POST /api/deals
@@ -150,6 +151,33 @@ const getFeaturedDeal = async (req, res) => {
       .select("-voters");
 
     res.status(200).json(deal); // null if no deals exist yet — frontend handles that
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// ─── PLATFORM STATS (real, computed from actual data) ────────
+// @route   GET /api/deals/stats
+// @access  Public
+const getPlatformStats = async (req, res) => {
+  try {
+    const totalDeals = await Deal.countDocuments({ status: "approved" });
+    const totalMembers = await User.countDocuments();
+
+    const savingsResult = await Deal.aggregate([
+      { $match: { status: "approved" } },
+      {
+        $group: {
+          _id: null,
+          totalSaved: {
+            $sum: { $subtract: ["$originalPrice", "$discountedPrice"] },
+          },
+        },
+      },
+    ]);
+    const totalSaved = savingsResult[0]?.totalSaved || 0;
+
+    res.status(200).json({ totalDeals, totalMembers, totalSaved });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -412,4 +440,5 @@ module.exports = {
   getMyDeals,
   getAllDealsAdmin,
   getFeaturedDeal,
+  getPlatformStats,
 };
