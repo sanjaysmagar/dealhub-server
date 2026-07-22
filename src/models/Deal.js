@@ -38,8 +38,7 @@ const dealSchema = new mongoose.Schema({
   },
   retailer: {
     type: String,
-    enum: ['ebay', 'amazon', 'asos', 'other'],
-    default: 'other',
+    required: [true, 'Retailer is required'],
   },
 
   // ─── AFFILIATE SECTION ──────────────────────────────────────────
