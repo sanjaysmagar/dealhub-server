@@ -14,12 +14,13 @@ const {
   getPlatformStats,
 } = require("../controllers/dealController");
 const { protect, adminOnly } = require("../middleware/authMiddleware");
+const { identifyIfLoggedIn } = require('../middleware/optionalAuth');
 
 // Public
-router.get("/", getAllDeals);
-router.get("/featured", getFeaturedDeal);
-router.get("/stats", getPlatformStats);
-router.get("/:id", getDealById);
+router.get('/', identifyIfLoggedIn, getAllDeals);
+router.get('/featured', getFeaturedDeal);
+router.get('/stats', getPlatformStats);
+router.get('/:id', identifyIfLoggedIn, getDealById);
 
 // Private
 router.post("/", protect, createDeal);

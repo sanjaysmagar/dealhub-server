@@ -3,6 +3,7 @@ const AffiliateLink = require("../models/AffiliateLink");
 const { buildAffiliateUrl } = require("../utils/affiliateUrlBuilder");
 const { checkAndAwardBadges } = require("../utils/rewardEngine");
 const User = require("../models/User");
+const SavedDeal = require("../models/SavedDeal");
 
 // ─── CREATE DEAL ─────────────────────────────────────────────
 // @route   POST /api/deals
@@ -93,20 +94,15 @@ const getAllDeals = async (req, res) => {
       limit = 10,
     } = req.query;
 
-    // Only show live approved deals
     const filter = { status: "approved" };
-
-    if (search) {
-      filter.$text = { $search: search };
-    }
+    if (search) filter.$text = { $search: search };
     if (category) filter.category = category;
     if (retailer) filter.retailer = retailer;
 
-    // Sort options — just like HotUKDeals
     const sortOptions = {
-      hot: { score: -1 }, // highest score (upvotes - downvotes)
-      new: { createdAt: -1 }, // newest first
-      top: { "votes.up": -1 }, // most upvotes
+      hot: { score: -1 },
+      new: { createdAt: -1 },
+      top: { "votes.up": -1 },
     };
     const sortBy = sortOptions[sort] || sortOptions.hot;
 
@@ -118,13 +114,38 @@ const getAllDeals = async (req, res) => {
       .sort(sortBy)
       .skip(skip)
       .limit(limitNum)
-      .populate("postedBy", "username avatar")
-      .select("-voters"); // don't expose full voters list
+      .populate("postedBy", "username avatar");
 
     const total = await Deal.countDocuments(filter);
 
+    // Personalise each deal with this user's vote + saved status,
+    // without exposing the full voters list to the client.
+    let savedIds = new Set();
+    if (req.user) {
+      const mySaves = await SavedDeal.find({ userId: req.user._id }).select(
+        "dealId",
+      );
+      savedIds = new Set(mySaves.map((s) => s.dealId.toString()));
+    }
+
+    const dealsOut = deals.map((deal) => {
+      const obj = deal.toObject();
+      if (req.user) {
+        const mine = obj.voters.find(
+          (v) => v.userId.toString() === req.user._id.toString(),
+        );
+        obj.myVote = mine ? mine.voteType : null;
+        obj.isSaved = savedIds.has(obj._id.toString());
+      } else {
+        obj.myVote = null;
+        obj.isSaved = false;
+      }
+      delete obj.voters;
+      return obj;
+    });
+
     res.status(200).json({
-      deals,
+      deals: dealsOut,
       pagination: {
         total,
         page: pageNum,
@@ -190,15 +211,32 @@ const getPlatformStats = async (req, res) => {
 // @access  Public
 const getDealById = async (req, res) => {
   try {
-    const deal = await Deal.findById(req.params.id)
-      .populate("postedBy", "username avatar points badges")
-      .select("-voters");
+    const deal = await Deal.findById(req.params.id).populate(
+      "postedBy",
+      "username avatar points badges",
+    );
 
     if (!deal || deal.status === "rejected") {
       return res.status(404).json({ message: "Deal not found" });
     }
 
-    res.status(200).json(deal);
+    const obj = deal.toObject();
+    if (req.user) {
+      const mine = obj.voters.find(
+        (v) => v.userId.toString() === req.user._id.toString(),
+      );
+      obj.myVote = mine ? mine.voteType : null;
+      obj.isSaved = !!(await SavedDeal.exists({
+        dealId: deal._id,
+        userId: req.user._id,
+      }));
+    } else {
+      obj.myVote = null;
+      obj.isSaved = false;
+    }
+    delete obj.voters;
+
+    res.status(200).json(obj);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -296,7 +334,7 @@ const deleteDeal = async (req, res) => {
 //   Opposite vote     → switches from up to down or vice versa
 const voteDeal = async (req, res) => {
   try {
-    const { voteType } = req.body; // 'up' or 'down'
+    const { voteType } = req.body;
 
     if (!["up", "down"].includes(voteType)) {
       return res.status(400).json({ message: "Vote type must be up or down" });
@@ -311,31 +349,31 @@ const voteDeal = async (req, res) => {
 
     if (existingVoteIndex !== -1) {
       const existingVote = deal.voters[existingVoteIndex];
-
       if (existingVote.voteType === voteType) {
-        // Same vote → toggle off
         deal.votes[voteType] -= 1;
         deal.voters.splice(existingVoteIndex, 1);
       } else {
-        // Different vote → switch
         deal.votes[existingVote.voteType] -= 1;
         deal.votes[voteType] += 1;
         deal.voters[existingVoteIndex].voteType = voteType;
       }
     } else {
-      // New vote
       deal.votes[voteType] += 1;
       deal.voters.push({ userId: req.user._id, voteType });
     }
 
-    // Recalculate score for hot ranking
     deal.score = deal.votes.up - deal.votes.down;
     await deal.save();
+
+    const myVoteEntry = deal.voters.find(
+      (v) => v.userId.toString() === req.user._id.toString(),
+    );
 
     res.status(200).json({
       message: "Vote recorded",
       votes: deal.votes,
       score: deal.score,
+      myVote: myVoteEntry ? myVoteEntry.voteType : null,
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
