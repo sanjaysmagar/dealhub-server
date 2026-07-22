@@ -31,6 +31,7 @@ const dealSchema = new mongoose.Schema({
     type: String,
     default: '',
   },
+  images: { type: [String], default: [] },
   externalLink: {
     type: String,
     required: [true, 'External deal link is required'],
