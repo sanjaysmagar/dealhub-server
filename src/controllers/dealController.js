@@ -89,6 +89,8 @@ const getAllDeals = async (req, res) => {
       search,
       category,
       retailer,
+      postedBy,
+      exclude,
       sort = "hot",
       page = 1,
       limit = 10,
@@ -98,6 +100,8 @@ const getAllDeals = async (req, res) => {
     if (search) filter.$text = { $search: search };
     if (category) filter.category = category;
     if (retailer) filter.retailer = retailer;
+    if (postedBy) filter.postedBy = postedBy;
+    if (exclude) filter._id = { $ne: exclude };
 
     const sortOptions = {
       hot: { score: -1 },

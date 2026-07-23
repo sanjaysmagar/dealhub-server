@@ -12,18 +12,27 @@ const generateLink = async (req, res) => {
     const { dealId } = req.body;
 
     const deal = await Deal.findById(dealId);
-    if (!deal || deal.status !== 'approved') {
-      return res.status(404).json({ message: 'Deal not found' });
+    if (!deal || deal.status !== "approved") {
+      return res.status(404).json({ message: "Deal not found" });
     }
 
-    // Reuse existing link if this user already has one for this deal
+    // Only the deal's original poster can hold an affiliate link for it —
+    // keeps all reward-earning tied to the person who actually contributed
+    // the deal, and guarantees exactly one tracking code per deal (which
+    // also avoids any eBay commission attribution ambiguity).
+    if (deal.postedBy.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        message:
+          "Only the person who posted this deal can generate an affiliate link for it",
+      });
+    }
+
+    // Reuse existing link (should already exist from auto-creation at
+    // posting time — this is a safety net, not the normal path)
     let link = await AffiliateLink.findOne({ dealId, userId: req.user._id });
     if (!link) {
       link = await AffiliateLink.create({ dealId, userId: req.user._id });
 
-      // Generate the REAL network affiliate URL (eBay or Skimlinks) if credentials
-      // exist, and store it on the deal so trackClick() redirects through the
-      // real network instead of the plain external link.
       if (!deal.affiliate?.url) {
         const { url, platform } = buildAffiliateUrl({
           externalLink: deal.externalLink,
@@ -35,22 +44,20 @@ const generateLink = async (req, res) => {
           deal.affiliate = { url, platform, trackingCode: link.trackingCode };
           await deal.save();
         }
-        // If url is null (network not set up), deal.affiliate stays null and
-        // trackClick() already falls back to deal.externalLink — nothing breaks.
       }
     }
 
-    const baseUrl = process.env.BASE_URL || `http://localhost:${process.env.PORT || 5000}`;
+    const baseUrl =
+      process.env.BASE_URL || `http://localhost:${process.env.PORT || 5000}`;
 
     res.status(201).json({
-      message: 'Affiliate link ready to share',
+      message: "Affiliate link ready to share",
       trackingCode: link.trackingCode,
       shareUrl: `${baseUrl}/api/affiliate/go/${link.trackingCode}`,
       clicks: link.clicks,
       conversions: link.conversions,
       pointsEarned: link.pointsEarned,
     });
-
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -127,13 +134,11 @@ const simulatePurchase = async (req, res) => {
     link.pointsEarned += points;
     await link.save();
 
-    res
-      .status(200)
-      .json({
-        message: "Purchase simulated successfully",
-        pointsAwarded: points,
-        link,
-      });
+    res.status(200).json({
+      message: "Purchase simulated successfully",
+      pointsAwarded: points,
+      link,
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
