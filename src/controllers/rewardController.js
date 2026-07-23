@@ -1,8 +1,8 @@
-const Reward = require('../models/Reward');
-const User = require('../models/User');
-const AffiliateLink = require('../models/AffiliateLink');
-const Deal = require('../models/Deal');
-const { BADGES, checkAndAwardBadges } = require('../utils/rewardEngine');
+const Reward = require("../models/Reward");
+const User = require("../models/User");
+const AffiliateLink = require("../models/AffiliateLink");
+const Deal = require("../models/Deal");
+const { BADGES, checkAndAwardBadges } = require("../utils/rewardEngine");
 
 // ─── MY POINTS HISTORY ────────────────────────────────────────────
 // @route   GET /api/rewards/history
@@ -18,7 +18,7 @@ const getMyHistory = async (req, res) => {
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
-      .populate('affiliateLinkId', 'trackingCode clicks conversions');
+      .populate("affiliateLinkId", "trackingCode clicks conversions");
 
     const total = await Reward.countDocuments({ userId: req.user._id });
 
@@ -30,7 +30,6 @@ const getMyHistory = async (req, res) => {
         pages: Math.ceil(total / limit),
       },
     });
-
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -45,7 +44,9 @@ const getMySummary = async (req, res) => {
     const userId = req.user._id;
 
     // Points and badges from user document
-    const user = await User.findById(userId).select('username points badges avatar');
+    const user = await User.findById(userId).select(
+      "username points badges avatar",
+    );
 
     // Total clicks and conversions across all affiliate links
     const affiliateStats = await AffiliateLink.aggregate([
@@ -53,8 +54,8 @@ const getMySummary = async (req, res) => {
       {
         $group: {
           _id: null,
-          totalClicks: { $sum: '$clicks' },
-          totalConversions: { $sum: '$conversions' },
+          totalClicks: { $sum: "$clicks" },
+          totalConversions: { $sum: "$conversions" },
           totalLinks: { $count: {} },
         },
       },
@@ -64,21 +65,26 @@ const getMySummary = async (req, res) => {
     const totalDeals = await Deal.countDocuments({ postedBy: userId });
 
     // User's rank on the leaderboard
-    const rank = await User.countDocuments({ points: { $gt: user.points } }) + 1;
+    const rank =
+      (await User.countDocuments({ points: { $gt: user.points } })) + 1;
 
     // Enrich badges with label and description
-    const earnedBadges = BADGES.filter(b => user.badges.includes(b.id)).map(b => ({
-      id: b.id,
-      label: b.label,
-      description: b.description,
-    }));
+    const earnedBadges = BADGES.filter((b) => user.badges.includes(b.id)).map(
+      (b) => ({
+        id: b.id,
+        label: b.label,
+        description: b.description,
+      }),
+    );
 
     // Locked badges (not yet earned) — useful for frontend progress display
-    const lockedBadges = BADGES.filter(b => !user.badges.includes(b.id)).map(b => ({
-      id: b.id,
-      label: b.label,
-      description: b.description,
-    }));
+    const lockedBadges = BADGES.filter((b) => !user.badges.includes(b.id)).map(
+      (b) => ({
+        id: b.id,
+        label: b.label,
+        description: b.description,
+      }),
+    );
 
     const stats = affiliateStats[0] || {
       totalClicks: 0,
@@ -98,36 +104,80 @@ const getMySummary = async (req, res) => {
       earnedBadges,
       lockedBadges,
     });
-
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
 // ─── LEADERBOARD ──────────────────────────────────────────────────
-// @route   GET /api/rewards/leaderboard
+// @route   GET /api/rewards/leaderboard?period=all|month|week
 // @access  Public
-// Top 10 users by total points — used for leaderboard page
 const getLeaderboard = async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 10;
+    const period = req.query.period || "all";
 
-    const topUsers = await User.find({ points: { $gt: 0 } })
-      .sort({ points: -1 })
-      .limit(limit)
-      .select('username avatar points badges');
+    // ── All time — unchanged, reads directly from the running total ──
+    if (period === "all") {
+      const topUsers = await User.find({ points: { $gt: 0 } })
+        .sort({ points: -1 })
+        .limit(limit)
+        .select("username avatar points badges");
 
-    // Add rank position and badge count
-    const leaderboard = topUsers.map((user, index) => ({
-      rank: index + 1,
-      username: user.username,
-      avatar: user.avatar,
-      points: user.points,
-      badgeCount: user.badges.length,
-    }));
+      const leaderboard = topUsers.map((user, index) => ({
+        rank: index + 1,
+        username: user.username,
+        avatar: user.avatar,
+        points: user.points,
+        badgeCount: user.badges.length,
+      }));
+
+      return res.status(200).json(leaderboard);
+    }
+
+    // ── Month / Week — computed from individual timestamped Reward
+    // events, since User.points has no time dimension of its own ──
+    const now = new Date();
+    let startDate;
+    if (period === "week") {
+      startDate = new Date(now);
+      startDate.setDate(startDate.getDate() - 7);
+    } else {
+      // Calendar month-to-date (resets on the 1st)
+      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+    }
+
+    const periodTotals = await Reward.aggregate([
+      { $match: { createdAt: { $gte: startDate } } },
+      { $group: { _id: "$userId", totalPoints: { $sum: "$points" } } },
+      { $sort: { totalPoints: -1 } },
+      { $limit: limit },
+    ]);
+
+    const userIds = periodTotals.map((p) => p._id);
+    const users = await User.find({ _id: { $in: userIds } }).select(
+      "username avatar badges",
+    );
+    const userMap = {};
+    users.forEach((u) => {
+      userMap[u._id.toString()] = u;
+    });
+
+    const leaderboard = periodTotals
+      .map((p, index) => {
+        const u = userMap[p._id.toString()];
+        if (!u) return null; // safety: skip if the user account was since deleted
+        return {
+          rank: index + 1,
+          username: u.username,
+          avatar: u.avatar,
+          points: p.totalPoints,
+          badgeCount: u.badges.length,
+        };
+      })
+      .filter(Boolean);
 
     res.status(200).json(leaderboard);
-
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -142,18 +192,19 @@ const checkBadges = async (req, res) => {
   try {
     const newBadges = await checkAndAwardBadges(req.user._id);
 
-    const user = await User.findById(req.user._id).select('badges');
-    const allBadges = BADGES.filter(b => user.badges.includes(b.id)).map(b => ({
-      id: b.id,
-      label: b.label,
-      description: b.description,
-    }));
+    const user = await User.findById(req.user._id).select("badges");
+    const allBadges = BADGES.filter((b) => user.badges.includes(b.id)).map(
+      (b) => ({
+        id: b.id,
+        label: b.label,
+        description: b.description,
+      }),
+    );
 
     res.status(200).json({
       newBadgesAwarded: newBadges || [],
       allEarnedBadges: allBadges,
     });
-
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
