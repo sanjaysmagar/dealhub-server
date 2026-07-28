@@ -4,6 +4,7 @@ const { buildAffiliateUrl } = require("../utils/affiliateUrlBuilder");
 const { checkAndAwardBadges } = require("../utils/rewardEngine");
 const User = require("../models/User");
 const SavedDeal = require("../models/SavedDeal");
+const { notify } = require("../utils/notify");
 
 // ─── CREATE DEAL ─────────────────────────────────────────────
 // @route   POST /api/deals
@@ -96,7 +97,11 @@ const getAllDeals = async (req, res) => {
       limit = 10,
     } = req.query;
 
-    const filter = { status: "approved" };
+    const now = new Date();
+    const filter = {
+      status: "approved",
+      $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }],
+    };
     if (search) filter.$text = { $search: search };
     if (category) filter.category = category;
     if (retailer) filter.retailer = retailer;
@@ -347,6 +352,9 @@ const voteDeal = async (req, res) => {
     const deal = await Deal.findById(req.params.id);
     if (!deal) return res.status(404).json({ message: "Deal not found" });
 
+    const isSelfVote = deal.postedBy.toString() === req.user._id.toString();
+    let wasRemoved = false;
+
     const existingVoteIndex = deal.voters.findIndex(
       (v) => v.userId.toString() === req.user._id.toString(),
     );
@@ -356,6 +364,7 @@ const voteDeal = async (req, res) => {
       if (existingVote.voteType === voteType) {
         deal.votes[voteType] -= 1;
         deal.voters.splice(existingVoteIndex, 1);
+        wasRemoved = true;
       } else {
         deal.votes[existingVote.voteType] -= 1;
         deal.votes[voteType] += 1;
@@ -368,6 +377,18 @@ const voteDeal = async (req, res) => {
 
     deal.score = deal.votes.up - deal.votes.down;
     await deal.save();
+
+    // Notify the poster of a genuine new/switched vote — skip self-votes
+    // (voting on your own deal) and toggle-offs (removing a vote isn't
+    // really "receiving" one).
+    if (!isSelfVote && !wasRemoved) {
+      await notify({
+        userId: deal.postedBy,
+        type: "vote_received",
+        message: `Your deal "${deal.title}" got a ${voteType === "up" ? "🔥 Hot" : "❄️ Cold"} vote`,
+        link: `/deals/${deal._id}`,
+      });
+    }
 
     const myVoteEntry = deal.voters.find(
       (v) => v.userId.toString() === req.user._id.toString(),
@@ -404,6 +425,16 @@ const moderateDeal = async (req, res) => {
     );
 
     if (!deal) return res.status(404).json({ message: "Deal not found" });
+
+    await notify({
+      userId: deal.postedBy,
+      type: status === "approved" ? "deal_approved" : "deal_rejected",
+      message:
+        status === "approved"
+          ? `Your deal "${deal.title}" was approved and is now live!`
+          : `Your deal "${deal.title}" was rejected`,
+      link: status === "approved" ? `/deals/${deal._id}` : null,
+    });
 
     res.status(200).json({
       message: `Deal ${status} successfully`,

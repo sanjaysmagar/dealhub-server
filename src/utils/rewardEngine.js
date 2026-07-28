@@ -1,36 +1,8 @@
-// const User = require('../models/User');
-// const Reward = require('../models/Reward');
-
-// const POINTS = {
-//   click: 1,
-//   conversion: 20,
-// };
-
-// // Adds points to a user's balance AND logs the event for their points history.
-// // Every part of the app that awards points should go through this — not update User.points directly.
-// const awardPoints = async ({ userId, type, affiliateLinkId, description }) => {
-//   const points = POINTS[type];
-//   if (!points) throw new Error(`Unknown reward type: ${type}`);
-
-//   await User.findByIdAndUpdate(userId, { $inc: { points } });
-
-//   await Reward.create({
-//     userId,
-//     type,
-//     points,
-//     description: description || (type === 'click' ? 'Affiliate link click reward' : 'Affiliate conversion reward'),
-//     affiliateLinkId: affiliateLinkId || null,
-//   });
-
-//   return points;
-// };
-
-// module.exports = { awardPoints, POINTS };
-
 const User = require('../models/User');
 const Reward = require('../models/Reward');
 const Deal = require('../models/Deal');
 const AffiliateLink = require('../models/AffiliateLink');
+const { notify } = require('./notify');
 
 const POINTS = {
   click: 1,
@@ -121,12 +93,13 @@ const checkAndAwardBadges = async (userId) => {
     }
   }
 
-  if (newBadges.length > 0) {
+if (newBadges.length > 0) {
     await User.findByIdAndUpdate(userId, {
       $push: { badges: { $each: newBadges } },
     });
 
-    // Log each badge as a reward event so it shows in history
+    // Log each badge as a reward event so it shows in history,
+    // and notify the user for each one earned
     for (const badgeId of newBadges) {
       const badge = BADGES.find(b => b.id === badgeId);
       await Reward.create({
@@ -134,6 +107,13 @@ const checkAndAwardBadges = async (userId) => {
         type: 'badge',
         points: 0,
         description: `Badge unlocked: ${badge.label} — ${badge.description}`,
+      });
+
+      await notify({
+        userId,
+        type: 'badge_earned',
+        message: `🏆 New badge unlocked: ${badge.label}!`,
+        link: '/rewards',
       });
     }
   }
@@ -150,14 +130,23 @@ const awardPoints = async ({ userId, type, affiliateLinkId, description }) => {
 
   await User.findByIdAndUpdate(userId, { $inc: { points } });
 
+  const finalDescription = description || (type === 'click'
+    ? 'Affiliate link click reward'
+    : 'Affiliate conversion reward');
+
   await Reward.create({
     userId,
     type,
     points,
-    description: description || (type === 'click'
-      ? 'Affiliate link click reward'
-      : 'Affiliate conversion reward'),
+    description: finalDescription,
     affiliateLinkId: affiliateLinkId || null,
+  });
+
+  await notify({
+    userId,
+    type: 'points_earned',
+    message: `+${points} pts — ${finalDescription}`,
+    link: '/rewards',
   });
 
   // Auto-check badges after every award

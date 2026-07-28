@@ -7,6 +7,7 @@ const dealRoutes = require("./routes/dealRoutes");
 const affiliateRoutes = require("./routes/affiliateRoutes");
 const rewardRoutes = require("./routes/rewardRoutes");
 const savedDealRoutes = require("./routes/savedDealRoutes");
+const notificationRoutes = require('./routes/notificationRoutes');
 
 dotenv.config();
 // console.log('DEBUG — FRONTEND_URL is:', JSON.stringify(process.env.FRONTEND_URL));
@@ -31,6 +32,7 @@ app.use("/api/deals", dealRoutes);
 app.use("/api/affiliate", affiliateRoutes);
 app.use("/api/rewards", rewardRoutes);
 app.use("/api/saved", savedDealRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // Test route
 app.get("/", (req, res) => {

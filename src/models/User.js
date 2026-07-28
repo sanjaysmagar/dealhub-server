@@ -68,9 +68,15 @@ const userSchema = new mongoose.Schema(
 );
 
 // Auto-hash password before saving
-userSchema.pre("save", async function (next) {
-  if (!this.isModified("password")) return next();
-  if (!this.password) return next(); // skip for Google users
+// userSchema.pre("save", async function (next) {
+//   if (!this.isModified("password")) return next();
+//   if (!this.password) return next(); // skip for Google users
+//   const salt = await bcrypt.genSalt(10);
+//   this.password = await bcrypt.hash(this.password, salt);
+// });
+
+userSchema.pre("save", async function () {
+  if (!this.isModified("password") || !this.password) return; // skip for Google users
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);
 });
