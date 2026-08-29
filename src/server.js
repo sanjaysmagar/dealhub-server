@@ -1,6 +1,9 @@
+const dotenv = require("dotenv");
+// Load .env.test when running tests, otherwise the normal .env
+dotenv.config({ path: process.env.NODE_ENV === 'test' ? '.env.test' : '.env' });
+
 const express = require("express");
 const cors = require("cors");
-const dotenv = require("dotenv");
 const connectDB = require("./config/db");
 const authRoutes = require("./routes/authRoutes");
 const dealRoutes = require("./routes/dealRoutes");
@@ -9,22 +12,17 @@ const rewardRoutes = require("./routes/rewardRoutes");
 const savedDealRoutes = require("./routes/savedDealRoutes");
 const notificationRoutes = require('./routes/notificationRoutes');
 
-dotenv.config();
-// console.log('DEBUG — FRONTEND_URL is:', JSON.stringify(process.env.FRONTEND_URL));
 const app = express();
 
 // Middleware
 app.use(
   cors({
-    origin: ["http://localhost:3000", process.env.FRONTEND_URL].filter(Boolean), // filters out undefined if FRONTEND_URL isn't set yet
+    origin: ["http://localhost:3000", process.env.FRONTEND_URL].filter(Boolean),
     credentials: true,
   }),
 );
 
 app.use(express.json());
-
-// Connect to database
-connectDB();
 
 // Routes
 app.use("/api/auth", authRoutes);
@@ -39,5 +37,13 @@ app.get("/", (req, res) => {
   res.json({ message: "Deals API is running" });
 });
 
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+// Only connect to the real database and start listening when this file is
+// run directly (e.g. `node server.js`) — not when Supertest imports `app`
+// for testing, since tests connect to their own in-memory database instead.
+if (require.main === module) {
+  connectDB();
+  const PORT = process.env.PORT || 5000;
+  app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+}
+
+module.exports = app;

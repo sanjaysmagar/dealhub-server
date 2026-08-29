@@ -3,6 +3,11 @@ const jwt = require("jsonwebtoken");
 const { OAuth2Client } = require("google-auth-library");
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+const {
+  issueOtp,
+  assertResendAllowed,
+  verifyOtp: checkOtp,
+} = require("../utils/otpService");
 
 // Generate JWT token
 const generateToken = (userId) => {
@@ -30,24 +35,41 @@ const registerUser = async (req, res) => {
     }
 
     // Create user (password gets hashed automatically via model pre-save hook)
+    // const user = await User.create({
+    //   username,
+    //   email,
+    //   password,
+    //   authProvider: "local",
+    // });
+
+    // res.status(201).json({
+    //   message: "User registered successfully",
+    //   token: generateToken(user._id),
+    //   user: {
+    //     id: user._id,
+    //     username: user.username,
+    //     email: user.email,
+    //     role: user.role,
+    //     points: user.points,
+    //     avatar: user.avatar,
+    //   },
+    // });
+
     const user = await User.create({
       username,
       email,
       password,
       authProvider: "local",
+      isVerified: false,
     });
 
+    await issueOtp(user);
+
     res.status(201).json({
-      message: "User registered successfully",
-      token: generateToken(user._id),
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        role: user.role,
-        points: user.points,
-        avatar: user.avatar,
-      },
+      message:
+        "Registration successful. Check your email for a verification code.",
+      userId: user._id,
+      email: user.email,
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -72,9 +94,25 @@ const loginUser = async (req, res) => {
     }
 
     // Compare password
+    // const isMatch = await user.matchPassword(password);
+    // if (!isMatch) {
+    //   return res.status(401).json({ message: "Invalid email or password" });
+    // }
     const isMatch = await user.matchPassword(password);
     if (!isMatch) {
       return res.status(401).json({ message: "Invalid email or password" });
+    }
+
+    // Only newly-registered local accounts are ever explicitly marked
+    // false — existing accounts default to true, so this can't lock
+    // anyone out who registered before this feature existed.
+    if (user.isVerified === false) {
+      return res.status(403).json({
+        message: "Please verify your email before logging in",
+        userId: user._id,
+        email: user.email,
+        requiresVerification: true,
+      });
     }
 
     res.status(200).json({
@@ -146,6 +184,7 @@ const googleAuth = async (req, res) => {
         googleId,
         authProvider: "google",
         avatar: picture || "",
+        isVerified: true,
         // password stays undefined — schema already treats this as valid
         // for non-local accounts, and the pre-save hook correctly skips hashing
       });
@@ -164,8 +203,10 @@ const googleAuth = async (req, res) => {
       },
     });
   } catch (error) {
-  console.log('DEBUG — googleAuth error:', error.message);
-  res.status(401).json({ message: 'Google sign-in failed: ' + error.message });
+    console.log("DEBUG — googleAuth error:", error.message);
+    res
+      .status(401)
+      .json({ message: "Google sign-in failed: " + error.message });
   }
 };
 
@@ -212,4 +253,70 @@ const updateProfile = async (req, res) => {
   }
 };
 
-module.exports = { registerUser, loginUser, getMe, updateProfile, googleAuth };
+// @route   POST /api/auth/verify-otp
+// @access  Public   Body: { userId, code }
+const verifyOtpHandler = async (req, res) => {
+  try {
+    const { userId, code } = req.body;
+    if (!userId || !code) {
+      return res.status(400).json({ message: "userId and code are required" });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: "Account not found" });
+    if (user.isVerified) {
+      return res.status(400).json({ message: "Account is already verified" });
+    }
+
+    const ok = await checkOtp(userId, code);
+    if (!ok)
+      return res.status(400).json({ message: "Invalid or expired code" });
+
+    user.isVerified = true;
+    await user.save();
+
+    res.status(200).json({
+      message: "Email verified successfully",
+      token: generateToken(user._id),
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        points: user.points,
+        avatar: user.avatar,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// @route   POST /api/auth/resend-otp
+// @access  Public   Body: { userId }
+const resendOtpHandler = async (req, res) => {
+  try {
+    const { userId } = req.body;
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: "Account not found" });
+    if (user.isVerified) {
+      return res.status(400).json({ message: "Account is already verified" });
+    }
+
+    await assertResendAllowed(userId);
+    await issueOtp(user);
+    res.status(200).json({ message: "A new verification code has been sent" });
+  } catch (error) {
+    res.status(error.status || 500).json({ message: error.message });
+  }
+};
+
+module.exports = {
+  registerUser,
+  loginUser,
+  getMe,
+  updateProfile,
+  googleAuth,
+  verifyOtpHandler,
+  resendOtpHandler,
+};

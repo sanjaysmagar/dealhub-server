@@ -3,6 +3,7 @@ const router = express.Router();
 const {
   createDeal,
   getAllDeals,
+  getRecommended,
   getDealById,
   updateDeal,
   deleteDeal,
@@ -20,6 +21,7 @@ const { identifyIfLoggedIn } = require('../middleware/optionalAuth');
 router.get('/', identifyIfLoggedIn, getAllDeals);
 router.get('/featured', getFeaturedDeal);
 router.get('/stats', getPlatformStats);
+router.get("/recommended", identifyIfLoggedIn, getRecommended);
 router.get('/:id', identifyIfLoggedIn, getDealById);
 
 // Private

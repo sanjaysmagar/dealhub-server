@@ -5,6 +5,7 @@ const { checkAndAwardBadges } = require("../utils/rewardEngine");
 const User = require("../models/User");
 const SavedDeal = require("../models/SavedDeal");
 const { notify } = require("../utils/notify");
+const { getRecommendedDeals } = require("../utils/recommendationEngine");
 
 // ─── CREATE DEAL ─────────────────────────────────────────────
 // @route   POST /api/deals
@@ -246,6 +247,20 @@ const getDealById = async (req, res) => {
     delete obj.voters;
 
     res.status(200).json(obj);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// ─── RECOMMENDED FOR YOU ─────────────────────────────────────
+// @route   GET /api/deals/recommended
+// @access  Private
+const getRecommended = async (req, res) => {
+  try {
+    if (!req.user) return res.status(200).json({ deals: [] });
+    const limit = parseInt(req.query.limit) || 8;
+    const deals = await getRecommendedDeals(req.user._id, limit);
+    res.status(200).json({ deals: deals.map((d) => d.toObject()) });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -509,6 +524,7 @@ const getAllDealsAdmin = async (req, res) => {
 module.exports = {
   createDeal,
   getAllDeals,
+  getRecommended,
   getDealById,
   updateDeal,
   deleteDeal,
